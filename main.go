@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pkg/browser"
+	"github.com/y0ssar1an/q"
 )
 
 var (
@@ -31,8 +32,18 @@ var (
 )
 
 func findImport(p string, rootp string) {
+	q.Q(p) // DEBUG
+	// Custom vanity url replacing for k8s
+	rep := strings.NewReplacer("k8s.io", "github.com/kubernetes")
+	repP := rep.Replace(p)
+	if repP != p {
+		q.Q(repP) // DEBUG
+		p = repP
+	}
+
 	if !pkgmatch.MatchString(p) {
 		// doesn't match the filter, skip it
+		q.Q("returning...") // DEBUG
 		return
 	}
 	if p == "C" {
@@ -41,15 +52,27 @@ func findImport(p string, rootp string) {
 	}
 	if _, ok := pkgs[p]; ok {
 		// seen this package before, skip it
+		q.Q("seen before...") // DEBUG
 		return
 	}
 	if strings.HasPrefix(p, "golang_org") {
+		q.Q("has prefix golang_org?? looking in vendor") // DEBUG
 		p = path.Join("vendor", p)
 	}
 
 	pkg, err := build.Import(p, rootp, 0)
-	if err != nil {
+	q.Q(pkg, err) // DEBUG
+	switch {
+	case err != nil && strings.Contains(err.Error(), "cannot find package"):
+		// let pkg terminate...
+	case err != nil:
 		log.Fatal(err)
+	default:
+	}
+
+	// schnake custom
+	for i := range pkg.Imports {
+		pkg.Imports[i] = rep.Replace(pkg.Imports[i])
 	}
 	pkgs[p] = filter(pkg.Imports)
 	for _, pkg := range pkgs[p] {
@@ -102,16 +125,24 @@ func check(err error) {
 }
 
 func main() {
-	var rootPkg * build.Package
+	var rootPkg *build.Package
 	var e error
 	for _, pkg := range flag.Args() {
+		// Custom vanity url replacing for k8s
+		rep := strings.NewReplacer("k8s.io", "github.com/kubernetes")
+		repP := rep.Replace(pkg)
+		if repP != pkg {
+			q.Q(repP) // DEBUG
+			pkg = repP
+		}
+
 		rootPkg, e = build.Import(pkg, "", 0)
 		if e != nil {
 			log.Fatal(e)
 		}
 		findImport(pkg, rootPkg.Dir)
 	}
-	cmd := exec.Command("dot", "-Tsvg")
+	cmd := exec.Command("neato", "-Tsvg")
 	in, err := cmd.StdinPipe()
 	check(err)
 	out, err := cmd.StdoutPipe()
@@ -119,6 +150,8 @@ func main() {
 	check(cmd.Start())
 
 	fmt.Fprintf(in, "digraph {\n")
+	// schnake test for neato overlap fix
+	fmt.Fprintf(in, "overlap = false;\n")
 	keys := keys()
 	for p, i := range keys {
 		fmt.Fprintf(in, "\tN%d [label=%q,shape=box];\n", i, p)
